@@ -1,0 +1,115 @@
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+REPO_ROOT = Path(__file__).parent.parent
+load_dotenv(REPO_ROOT / ".env")
+
+DATA_DIR = REPO_ROOT / "data"
+SUPPORT_TICKETS_DIR = REPO_ROOT / "support_tickets"
+
+NIM_MODEL = "meta/llama-3.1-70b-instruct"
+NIM_BASE_URL = "https://integrate.api.nvidia.com/v1"
+NIM_API_KEY = os.getenv("NVIDIA_API_KEY", "")
+
+RELEVANCE_THRESHOLD = 0.005
+RERANK_THRESHOLD = 0.05
+TOP_K_TFIDF = 50
+TOP_K_EMBEDDING = 50
+TOP_K_RERANK = 10
+MAX_CHUNK_SIZE = 2000
+CHUNK_OVERLAP = 300
+
+COMPANY_KEYWORDS = {
+    "HackerRank": [
+        "hackerrank", "hrank", "coding test", "assessment", "interview",
+        "screen", "recruit", "candidate", "hiring", "test", "challenge",
+        "resume builder", "mock interview", "prep kit", "certification",
+        "contest", "practice", "submission", "compiler", "question bank",
+    ],
+    "Claude": [
+        "claude", "anthropic", "ai assistant", "conversation", "chat",
+        "artifact", "sonnet", "opus", "haiku", "claude code", "claude desktop",
+        "pro plan", "max plan", "api key", "bedrock", "prompt",
+    ],
+    "Visa": [
+        "visa", "card", "payment", "transaction", "merchant", "charge",
+        "dispute", "fraud", "traveller", "traveler", "cheque", "checkout",
+        "pos terminal", "contactless", "chip", "pin", "cvv", "statement",
+    ],
+}
+
+PRODUCT_AREAS = {
+    "HackerRank": {
+        "screen": ["test", "assessment", "screen", "invite", "candidate", "score", "report", "proctoring", "integrity"],
+        "interviews": ["interview", "live", "record", "schedule", "whiteboard", "pair programming"],
+        "library": ["question", "library", "coding", "challenge", "problem"],
+        "settings": ["account", "setting", "role", "team", "admin", "user management"],
+        "integrations": ["integration", "ats", "api", "sso", "greenhouse", "lever", "workday", "icims"],
+        "community": ["community", "practice", "contest", "certification", "mock", "prep kit", "leaderboard"],
+        "engage": ["engage", "campus", "university", "hiring event"],
+        "chakra": ["chakra", "skillup", "learning path"],
+    },
+    "Claude": {
+        "account_management": ["account", "delete", "password", "login", "signup", "profile"],
+        "conversation_management": ["conversation", "delete", "rename", "history", "chat", "thread"],
+        "features": ["artifact", "feature", "capability", "tool", "function", "project", "knowledge"],
+        "api": ["api", "console", "key", "endpoint", "sdk", "bedrock", "token", "rate limit"],
+        "plans": ["pro", "max", "team", "enterprise", "plan", "subscription", "billing", "upgrade"],
+        "privacy": ["privacy", "data", "legal", "gdpr", "security", "retention"],
+        "desktop": ["desktop", "app", "mobile", "chrome", "extension", "android", "ios"],
+        "troubleshooting": ["error", "bug", "issue", "not working", "broken", "slow", "timeout"],
+    },
+    "Visa": {
+        "general_support": ["card", "lost", "stolen", "replace", "block", "activate", "pin"],
+        "travel_support": ["travel", "abroad", "international", "exchange", "currency", "forex"],
+        "dispute": ["dispute", "charge", "refund", "merchant", "unauthorized", "billing error"],
+        "fraud": ["fraud", "scam", "suspicious", "unauthorized", "identity theft", "phishing"],
+        "small_business": ["business", "merchant", "terminal", "pos", "accept payment", "settlement"],
+    },
+}
+
+ESCALATION_KEYWORDS = {
+    "score_manipulation": [
+        "increase my score", "change grade", "manipulate score", "fake score",
+        "review my answers", "graded me unfairly", "move me to the next round",
+        "tell the company to move me", "override hiring",
+    ],
+    "fraud": ["fraud", "scam", "stolen", "identity theft", "unauthorized transaction", "identity has been stolen"],
+    "security": ["security vulnerability", "bug bounty", "exploit", "breach", "security flaw"],
+    "unauthorized_action": [
+        "delete all files", "drop table", "rm -rf", "destroy", "wipe",
+        "give me the code to delete", "delete all",
+    ],
+    "platform_outage": [
+        "site is down", "site down", "not working at all", "completely down",
+        "outage", "all requests failing", "none of the pages", "none of the submissions",
+    ],
+    "refund_demand": [
+        "give me the refund asap", "refund me today", "refund now",
+        "i want my money back", "give me my money", "please give me the refund",
+    ],
+}
+
+REQUEST_TYPE_KEYWORDS = {
+    "bug": [
+        "error", "broken", "not working", "bug", "crash", "fail", "issue",
+        "problem", "down", "outage", "blocked", "stuck", "unable", "can't",
+        "cannot", "doesn't work", "stopped working", "facing", "blocker",
+    ],
+    "feature_request": [
+        "feature request", "would be nice", "suggestion",
+        "wish", "can you add", "please add", "it would help",
+    ],
+    "invalid": [],
+}
+
+ESCALATION_RESPONSE_TEMPLATES = {
+    "fraud": "This ticket involves potential fraud or identity theft and requires immediate attention from our security team. A human agent will review this case shortly.",
+    "security": "This ticket involves a security concern that requires review by our specialized security team.",
+    "score_manipulation": "We understand your concern about your assessment results. However, we cannot modify scores or override hiring decisions. Please contact the recruiting company directly for any disputes regarding your assessment.",
+    "unauthorized_action": "We cannot process this request as it involves potentially harmful actions. If you have a legitimate need, please contact our support team directly.",
+    "platform_outage": "We are aware of the issue and our engineering team has been notified. A human agent will follow up with you shortly.",
+    "refund_demand": "This request involves a financial transaction that requires review by our billing team. A human agent will assist you shortly.",
+    "out_of_scope": "This request appears to be outside the scope of our support system. A human agent will review and route this appropriately.",
+}
