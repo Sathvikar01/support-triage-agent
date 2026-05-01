@@ -8,9 +8,9 @@ load_dotenv(REPO_ROOT / ".env")
 DATA_DIR = REPO_ROOT / "data"
 SUPPORT_TICKETS_DIR = REPO_ROOT / "support_tickets"
 
-NIM_MODEL = "meta/llama-3.1-70b-instruct"
-NIM_BASE_URL = "https://integrate.api.nvidia.com/v1"
-NIM_API_KEY = os.getenv("NVIDIA_API_KEY", "")
+XIAOMI_MODEL = "mimo-v2.5"
+XIAOMI_BASE_URL = os.getenv("XIAOMI_BASE_URL", "https://api.xiaomi.com/v1") # Replace with actual Xiaomi endpoint if different
+XIAOMI_API_KEY = os.getenv("XIAOMI_API_KEY", "")
 
 RELEVANCE_THRESHOLD = 0.005
 RERANK_THRESHOLD = 0.05

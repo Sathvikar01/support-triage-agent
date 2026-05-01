@@ -1,5 +1,5 @@
 from typing import List, Optional
-from config import NIM_MODEL, NIM_BASE_URL, NIM_API_KEY
+from config import XIAOMI_MODEL, XIAOMI_BASE_URL, XIAOMI_API_KEY
 
 
 def generate_response(
@@ -10,7 +10,7 @@ def generate_response(
     request_type: str = "",
     subject: str = "",
 ) -> Optional[str]:
-    if not NIM_API_KEY:
+    if not XIAOMI_API_KEY:
         return None
 
     try:
@@ -44,9 +44,9 @@ Relevant Documentation:
 Please provide a helpful, grounded response to this support ticket."""
 
     try:
-        client = OpenAI(api_key=NIM_API_KEY, base_url=NIM_BASE_URL)
+        client = OpenAI(api_key=XIAOMI_API_KEY, base_url=XIAOMI_BASE_URL)
         completion = client.chat.completions.create(
-            model=NIM_MODEL,
+            model=XIAOMI_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -56,7 +56,7 @@ Please provide a helpful, grounded response to this support ticket."""
         )
         return completion.choices[0].message.content.strip()
     except Exception as e:
-        print(f"    [NIM API error: {type(e).__name__}]")
+        print(f"    [Xiaomi API error: {type(e).__name__}]")
         return None
 
 
