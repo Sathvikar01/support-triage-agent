@@ -37,9 +37,9 @@ def run(input_csv: Path, output_csv: Path, sample: bool = False, metadata_output
     results = []
     metadata = []
     for i, ticket in enumerate(tickets):
-        issue = ticket.get("Issue", "").strip()
-        subject = ticket.get("Subject", "").strip()
-        company = ticket.get("Company", "None").strip()
+        issue = (ticket.get("Issue") or ticket.get("issue") or ticket.get("Description") or ticket.get("description") or "").strip()
+        subject = (ticket.get("Subject") or ticket.get("subject") or "").strip()
+        company = (ticket.get("Company") or ticket.get("company") or "None").strip()
 
         if not issue:
             continue
