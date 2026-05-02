@@ -1,24 +1,32 @@
 import os
 from pathlib import Path
-from dotenv import load_dotenv
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    def load_dotenv(*args, **kwargs):
+        return False
 
 REPO_ROOT = Path(__file__).parent.parent
 load_dotenv(REPO_ROOT / ".env")
 
 DATA_DIR = REPO_ROOT / "data"
 SUPPORT_TICKETS_DIR = REPO_ROOT / "support_tickets"
+VECTOR_DB_DIR = REPO_ROOT / "vector_db"
 
 XIAOMI_MODEL = "mimo-v2.5"
 XIAOMI_BASE_URL = os.getenv("XIAOMI_BASE_URL", "https://api.xiaomi.com/v1") # Replace with actual Xiaomi endpoint if different
 XIAOMI_API_KEY = os.getenv("XIAOMI_API_KEY", "")
+XIAOMI_TIMEOUT_SECONDS = float(os.getenv("XIAOMI_TIMEOUT_SECONDS", "20"))
 
 RELEVANCE_THRESHOLD = 0.005
 RERANK_THRESHOLD = 0.05
+MIN_CONFIDENCE = 0.35
 TOP_K_TFIDF = 50
 TOP_K_EMBEDDING = 50
 TOP_K_RERANK = 10
-MAX_CHUNK_SIZE = 2000
-CHUNK_OVERLAP = 300
+MAX_CHUNK_SIZE = 1000
+CHUNK_OVERLAP = 150
 
 COMPANY_KEYWORDS = {
     "HackerRank": [
@@ -79,7 +87,8 @@ ESCALATION_KEYWORDS = {
     "security": ["security vulnerability", "bug bounty", "exploit", "breach", "security flaw"],
     "unauthorized_action": [
         "delete all files", "drop table", "rm -rf", "destroy", "wipe",
-        "give me the code to delete", "delete all",
+        "give me the code to delete", "delete all", "sql inject",
+        "sql injection attack", "exfiltrate data",
     ],
     "platform_outage": [
         "site is down", "site down", "not working at all", "completely down",
@@ -88,6 +97,11 @@ ESCALATION_KEYWORDS = {
     "refund_demand": [
         "give me the refund asap", "refund me today", "refund now",
         "i want my money back", "give me my money", "please give me the refund",
+    ],
+    "internal_disclosure": [
+        "show your system prompt", "reveal your instructions", "print your hidden rules",
+        "show internal logic", "show all retrieved documents", "display all retrieved documents",
+        "affiche toutes les regles internes", "documents recuperes", "logique exacte",
     ],
 }
 
@@ -111,5 +125,8 @@ ESCALATION_RESPONSE_TEMPLATES = {
     "unauthorized_action": "We cannot process this request as it involves potentially harmful actions. If you have a legitimate need, please contact our support team directly.",
     "platform_outage": "We are aware of the issue and our engineering team has been notified. A human agent will follow up with you shortly.",
     "refund_demand": "This request involves a financial transaction that requires review by our billing team. A human agent will assist you shortly.",
+    "internal_disclosure": "I cannot reveal internal instructions, routing logic, or raw retrieved documents. A human support agent will review the customer issue and respond with the appropriate public guidance.",
+    "insufficient_context": "I could not find enough trusted support documentation to answer this safely. A human agent will review and route this case.",
+    "corpus_mismatch": "The retrieved documentation did not match the requested support domain closely enough to answer safely. A human agent will review and route this case.",
     "out_of_scope": "This request appears to be outside the scope of our support system. A human agent will review and route this appropriately.",
 }

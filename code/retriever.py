@@ -1,7 +1,13 @@
+import hashlib
+import json
+import pickle
+from typing import List, Optional, Tuple
+
 import numpy as np
-from typing import List, Tuple, Optional
 from sklearn.feature_extraction.text import TfidfVectorizer
+
 from corpus_loader import Document
+from config import VECTOR_DB_DIR
 
 try:
     import faiss
@@ -10,10 +16,15 @@ except ImportError:
     HAS_FAISS = False
 
 try:
-    from sentence_transformers import SentenceTransformer, CrossEncoder
+    from sentence_transformers import CrossEncoder, SentenceTransformer
     HAS_ST = True
 except ImportError:
     HAS_ST = False
+
+
+EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+CACHE_VERSION = "2026-05-02-company-filtered-v2-chunksize-fix"
 
 
 class HybridRetriever:
@@ -26,57 +37,181 @@ class HybridRetriever:
         self.embeddings = None
         self.faiss_index = None
         self.reranker = None
-        self._use_embeddings = True
-        self._use_reranker = True
+        self.score_mode = "tfidf"
 
     def build(self):
-        print("Building TF-IDF index...")
+        VECTOR_DB_DIR.mkdir(parents=True, exist_ok=True)
+        faiss_path = VECTOR_DB_DIR / "index.faiss"
+        tfidf_path = VECTOR_DB_DIR / "tfidf.pkl"
+        embeddings_path = VECTOR_DB_DIR / "embeddings.npy"
+        manifest_path = VECTOR_DB_DIR / "manifest.json"
+
+        manifest = self._manifest()
+        if self._cache_is_valid(manifest_path, manifest) and tfidf_path.exists():
+            print("Loading existing retrieval cache...")
+            with open(tfidf_path, "rb") as f:
+                tfidf_data = pickle.load(f)
+                self.tfidf = tfidf_data["vectorizer"]
+                self.tfidf_matrix = tfidf_data["matrix"]
+
+            self._load_models()
+
+            if HAS_FAISS and faiss_path.exists() and self.embedder:
+                self.faiss_index = faiss.read_index(str(faiss_path))
+                self.score_mode = "rrf"
+                print(f"Loaded FAISS index with {self.faiss_index.ntotal} vectors.")
+            elif embeddings_path.exists() and self.embedder:
+                self.embeddings = np.load(embeddings_path)
+                self.score_mode = "rrf"
+
+            if self.reranker:
+                self.score_mode = "rerank"
+
+            print(f"Retriever ready (cache, mode={self.score_mode}).")
+            return
+
+        for stale_path in (faiss_path, embeddings_path):
+            if stale_path.exists():
+                stale_path.unlink()
+
+        print("Building TF-IDF index from scratch...")
         self.tfidf_matrix = self.tfidf.fit_transform(self.texts)
+        with open(tfidf_path, "wb") as f:
+            pickle.dump({"vectorizer": self.tfidf, "matrix": self.tfidf_matrix}, f)
         print(f"TF-IDF index built: {self.tfidf_matrix.shape}")
 
-        print("Loading all-MiniLM-L6-v2 embeddings model...")
-        self.embedder = SentenceTransformer("all-MiniLM-L6-v2")
-        print(f"Encoding {len(self.texts)} chunks...")
-        self.embeddings = self.embedder.encode(
-            self.texts, show_progress_bar=True, batch_size=256, convert_to_numpy=True
-        )
-        self.embeddings = np.array(self.embeddings, dtype="float32")
-        faiss.normalize_L2(self.embeddings)
+        self._load_models()
+        if self.embedder:
+            print(f"Encoding {len(self.texts)} chunks with {EMBEDDING_MODEL}...")
+            self.embeddings = self.embedder.encode(
+                self.texts, show_progress_bar=True, batch_size=256, convert_to_numpy=True
+            )
+            self.embeddings = np.array(self.embeddings, dtype="float32")
+            self._normalize(self.embeddings)
 
-        if HAS_FAISS:
-            dim = self.embeddings.shape[1]
-            self.faiss_index = faiss.IndexFlatIP(dim)
-            self.faiss_index.add(self.embeddings)
-            print(f"FAISS index built with {self.faiss_index.ntotal} vectors, dim={dim}")
+            if HAS_FAISS:
+                dim = self.embeddings.shape[1]
+                self.faiss_index = faiss.IndexFlatIP(dim)
+                self.faiss_index.add(self.embeddings)
+                faiss.write_index(self.faiss_index, str(faiss_path))
+                print(f"FAISS index built with {self.faiss_index.ntotal} vectors, dim={dim}")
+            else:
+                np.save(embeddings_path, self.embeddings)
 
-        print("Loading cross-encoder reranker...")
-        self.reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-        print("Retriever ready.")
+            self.score_mode = "rerank" if self.reranker else "rrf"
 
-    def retrieve(self, query: str, top_k: int = 10) -> List[Tuple[Document, float]]:
-        tfidf_results = self._tfidf_search(query, top_k=50)
-        embedding_results = self._embedding_search(query, top_k=50)
-        rrf_results = self._rrf_fusion(tfidf_results, embedding_results, k=60)
-        top_rrf = rrf_results[:30]
-        reranked = self._rerank(query, top_rrf)
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        print(f"Retriever ready (built, mode={self.score_mode}).")
+
+    def retrieve(
+        self,
+        query: str,
+        top_k: int = 10,
+        company: Optional[str] = None,
+    ) -> List[Tuple[Document, float]]:
+        allowed_indices = self._indices_for_company(company)
+        tfidf_results = self._tfidf_search(query, top_k=50, allowed_indices=allowed_indices)
+        embedding_results = self._embedding_search(query, top_k=50, allowed_indices=allowed_indices)
+
+        if embedding_results:
+            fused = self._rrf_fusion(tfidf_results, embedding_results, k=60)
+        else:
+            fused = tfidf_results
+
+        reranked = self._rerank(query, fused[:30])
         return reranked[:top_k]
 
-    def _tfidf_search(self, query: str, top_k: int = 50) -> List[Tuple[int, float]]:
+    def estimate_confidence(self, results: List[Tuple[Document, float]]) -> float:
+        if not results:
+            return 0.0
+        top_score = results[0][1]
+        if self.score_mode == "rerank":
+            return float(1.0 / (1.0 + np.exp(-top_score)))
+        if self.score_mode == "rrf":
+            return max(0.0, min(0.95, top_score / 0.03))
+        return max(0.0, min(0.95, top_score / 0.25))
+
+    def _load_models(self):
+        if not HAS_ST:
+            print("sentence-transformers unavailable; using TF-IDF-only retrieval.")
+            return
+        try:
+            print(f"Loading embeddings model: {EMBEDDING_MODEL}")
+            self.embedder = SentenceTransformer(EMBEDDING_MODEL)
+        except Exception as exc:
+            print(f"Embedding model unavailable ({type(exc).__name__}); using TF-IDF-only retrieval.")
+            self.embedder = None
+            return
+
+        try:
+            print(f"Loading reranker: {RERANKER_MODEL}")
+            self.reranker = CrossEncoder(RERANKER_MODEL)
+        except Exception as exc:
+            print(f"Reranker unavailable ({type(exc).__name__}); using fused retrieval scores.")
+            self.reranker = None
+
+    def _indices_for_company(self, company: Optional[str]) -> Optional[set]:
+        if company in (None, "", "None", "Unknown"):
+            return None
+        indices = {
+            i for i, doc in enumerate(self.documents)
+            if doc.metadata.get("company") == company
+        }
+        return indices or None
+
+    def _tfidf_search(
+        self,
+        query: str,
+        top_k: int = 50,
+        allowed_indices: Optional[set] = None,
+    ) -> List[Tuple[int, float]]:
         q_vec = self.tfidf.transform([query])
         scores = (self.tfidf_matrix @ q_vec.T).toarray().flatten()
+        if allowed_indices is not None:
+            mask = np.ones(scores.shape, dtype=bool)
+            mask[list(allowed_indices)] = False
+            scores[mask] = 0.0
         top_idx = np.argsort(scores)[::-1][:top_k]
         return [(int(i), float(scores[i])) for i in top_idx if scores[i] > 0]
 
-    def _embedding_search(self, query: str, top_k: int = 50) -> List[Tuple[int, float]]:
+    def _embedding_search(
+        self,
+        query: str,
+        top_k: int = 50,
+        allowed_indices: Optional[set] = None,
+    ) -> List[Tuple[int, float]]:
+        if not self.embedder:
+            return []
+
         q_emb = self.embedder.encode([query], convert_to_numpy=True)
         q_emb = np.array(q_emb, dtype="float32")
-        faiss.normalize_L2(q_emb)
+        self._normalize(q_emb)
+
+        if self.embeddings is not None:
+            scores = (self.embeddings @ q_emb.T).flatten()
+            if allowed_indices is not None:
+                mask = np.ones(scores.shape, dtype=bool)
+                mask[list(allowed_indices)] = False
+                scores[mask] = -np.inf
+            top_idx = np.argsort(scores)[::-1][:top_k]
+            return [(int(i), float(scores[i])) for i in top_idx if scores[i] > -np.inf]
+
         if self.faiss_index:
-            D, I = self.faiss_index.search(q_emb, top_k)
-            return [(int(I[0][i]), float(D[0][i])) for i in range(len(I[0]))]
-        scores = (self.embeddings @ q_emb.T).flatten()
-        top_idx = np.argsort(scores)[::-1][:top_k]
-        return [(int(i), float(scores[i])) for i in top_idx]
+            search_k = top_k if allowed_indices is None else min(len(self.documents), max(top_k * 20, 200))
+            D, I = self.faiss_index.search(q_emb, search_k)
+            results = []
+            for idx, score in zip(I[0], D[0]):
+                idx = int(idx)
+                if idx < 0:
+                    continue
+                if allowed_indices is not None and idx not in allowed_indices:
+                    continue
+                results.append((idx, float(score)))
+                if len(results) >= top_k:
+                    break
+            return results
+
+        return []
 
     def _rrf_fusion(
         self,
@@ -89,14 +224,48 @@ class HybridRetriever:
             rrf_scores[idx] = rrf_scores.get(idx, 0) + 1.0 / (k + rank + 1)
         for rank, (idx, _) in enumerate(embedding_results):
             rrf_scores[idx] = rrf_scores.get(idx, 0) + 1.0 / (k + rank + 1)
-        sorted_results = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
-        return sorted_results
+        return sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
 
     def _rerank(self, query: str, candidates: List[Tuple[int, float]]) -> List[Tuple[Document, float]]:
         if not candidates:
             return []
+        if not self.reranker:
+            return [(self.documents[idx], score) for idx, score in candidates]
+
         pairs = [(query, self.documents[idx].content) for idx, _ in candidates]
         scores = self.reranker.predict(pairs, show_progress_bar=False)
         scored = [(candidates[i][0], float(scores[i])) for i in range(len(candidates))]
         scored.sort(key=lambda x: x[1], reverse=True)
         return [(self.documents[idx], score) for idx, score in scored]
+
+    def _manifest(self) -> dict:
+        digest = hashlib.sha256()
+        for doc in self.documents:
+            meta = doc.metadata
+            digest.update(str(meta.get("source", "")).encode("utf-8"))
+            digest.update(str(meta.get("chunk_id", "")).encode("utf-8"))
+            digest.update(doc.content.encode("utf-8", errors="ignore"))
+        return {
+            "cache_version": CACHE_VERSION,
+            "document_count": len(self.documents),
+            "corpus_hash": digest.hexdigest(),
+            "embedding_model": EMBEDDING_MODEL,
+            "reranker_model": RERANKER_MODEL,
+        }
+
+    def _cache_is_valid(self, manifest_path, expected: dict) -> bool:
+        if not manifest_path.exists():
+            return False
+        try:
+            actual = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        return actual == expected
+
+    def _normalize(self, vectors: np.ndarray):
+        if HAS_FAISS:
+            faiss.normalize_L2(vectors)
+            return
+        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        vectors /= norms

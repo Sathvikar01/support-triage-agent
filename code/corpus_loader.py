@@ -1,8 +1,18 @@
 import re
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Dict, Optional
-import yaml
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
+    warnings.warn(
+        "PyYAML is not installed. Markdown frontmatter (title, source_url, etc.) "
+        "will be silently ignored. Install it with: pip install pyyaml",
+        stacklevel=2,
+    )
 
 from config import DATA_DIR, MAX_CHUNK_SIZE, CHUNK_OVERLAP
 
@@ -17,7 +27,8 @@ def _strip_frontmatter(text: str) -> tuple:
     m = re.match(r'^---\s*\n(.*?)\n---\s*\n', text, re.DOTALL)
     if m:
         try:
-            meta = yaml.safe_load(m.group(1)) or {}
+            meta = yaml.safe_load(m.group(1)) if yaml else {}
+            meta = meta or {}
         except Exception:
             meta = {}
         return text[m.end():], meta

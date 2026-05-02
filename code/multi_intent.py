@@ -1,90 +1,61 @@
 import re
-from typing import List, Dict, Any, Optional
-from dataclasses import dataclass, field
+from typing import List
 
 
-@dataclass
-class SubIntent:
-    text: str
-    index: int
-    escalation: Optional[Dict[str, Any]] = None
-    response: str = ""
-    status: str = "replied"
-    product_area: str = ""
-    request_type: str = "product_issue"
-    justification: str = ""
-
-
-_SPLIT_PATTERNS = [
+_EXPLICIT_SPLIT_PATTERNS = [
     re.compile(r'\b(?:also|additionally|furthermore|moreover|in addition|another thing|one more thing)\b', re.I),
-    re.compile(r'(?<=[.?])\s+(?=[A-Z])', re.M),
-    re.compile(r'\b(?:and|but)\s+(?=I\s|I\'m|I\'ve|I\'d|my\s|can\s|could\s|please\s|how\s|what\s|where\s|when\s|why\s|is\s|are\s|was\s|were\s)', re.I),
+    re.compile(r'\b(?:secondly|thirdly|finally)\b', re.I),
 ]
 
-_MULTI_INDICATORS = [
-    re.compile(r'\b\d+[.)]\s', re.M),
-    re.compile(r'^\s*[-*]\s', re.M),
-    re.compile(r'\?\s+.*\?', re.M),
+_LIST_ITEM_PATTERN = re.compile(r'(?m)^\s*(?:[-*]|\d+[.)])\s+')
+_ACTION_TERMS = [
+    "can", "could", "help", "need", "want", "lost", "stolen", "refund",
+    "dispute", "remove", "delete", "change", "update", "reset", "restore",
+    "access", "error", "failed", "failing", "blocked", "unable", "not working",
+    "charge", "login", "report", "cancel", "pause", "setup", "set up",
 ]
 
 
 def detect_compound(text: str) -> bool:
-    question_marks = text.count('?')
-    if question_marks >= 2:
+    if text.count("?") >= 2:
         return True
-    for pat in _MULTI_INDICATORS:
-        if pat.search(text):
-            return True
-    return False
+    if _LIST_ITEM_PATTERN.search(text):
+        return True
+    return any(pat.search(text) for pat in _EXPLICIT_SPLIT_PATTERNS)
 
 
 def split_intents(text: str) -> List[str]:
-    if not detect_compound(text):
-        return [text.strip()]
+    text = (text or "").strip()
+    if not text or not detect_compound(text):
+        return [text] if text else []
 
-    parts = []
-    for pat in _SPLIT_PATTERNS:
-        splits = pat.split(text)
-        if len(splits) > 1:
-            parts = [s.strip() for s in splits if s.strip() and len(s.strip()) > 20]
-            if len(parts) > 1:
-                return parts
+    if _LIST_ITEM_PATTERN.search(text):
+        parts = [_clean_part(part) for part in _LIST_ITEM_PATTERN.split(text)]
+        parts = [part for part in parts if _looks_actionable(part)]
+        if len(parts) > 1:
+            return parts
 
-    return [text.strip()]
+    if text.count("?") >= 2:
+        parts = [_clean_part(part) for part in re.split(r'(?<=\?)\s+', text)]
+        parts = [part for part in parts if _looks_actionable(part)]
+        if len(parts) > 1:
+            return parts
+
+    for pattern in _EXPLICIT_SPLIT_PATTERNS:
+        parts = [_clean_part(part) for part in pattern.split(text)]
+        parts = [part for part in parts if _looks_actionable(part)]
+        if len(parts) > 1:
+            return parts
+
+    return [text]
 
 
-def merge_results(intents: List[SubIntent]) -> Dict[str, Any]:
-    if len(intents) == 1:
-        return {
-            "status": intents[0].status,
-            "response": intents[0].response,
-            "product_area": intents[0].product_area,
-            "request_type": intents[0].request_type,
-            "justification": intents[0].justification,
-        }
+def _clean_part(text: str) -> str:
+    return re.sub(r'\b(?:and|but)\s*$', '', (text or "").strip(), flags=re.I).strip()
 
-    escalated = [i for i in intents if i.status == "escalated"]
-    if escalated:
-        combined_response = "\n\n".join(
-            f"**Issue {i.index + 1}:** {i.response}" for i in intents
-        )
-        combined_justification = "Multiple intents detected; escalation triggered for at least one sub-issue."
-        return {
-            "status": "escalated",
-            "response": combined_response,
-            "product_area": escalated[0].product_area,
-            "request_type": escalated[0].request_type,
-            "justification": combined_justification,
-        }
 
-    combined_response = "\n\n".join(
-        f"**Issue {i.index + 1}:** {i.response}" for i in intents
-    )
-    combined_justification = " | ".join(i.justification for i in intents if i.justification)
-    return {
-        "status": "replied",
-        "response": combined_response,
-        "product_area": intents[0].product_area,
-        "request_type": intents[0].request_type,
-        "justification": combined_justification,
-    }
+def _looks_actionable(text: str) -> bool:
+    lowered = (text or "").lower()
+    if len(lowered.split()) < 5:
+        return False
+    return any(term in lowered for term in _ACTION_TERMS)

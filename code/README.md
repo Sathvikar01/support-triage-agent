@@ -1,50 +1,43 @@
-# Support Triage Agent — Code
+# Support Triage Agent Code
 
-Terminal-based multi-domain support triage agent for HackerRank, Claude, and Visa.
+This directory contains the runnable Python agent for the HackerRank Orchestrate support-ticket challenge.
 
-## Architecture
-
-3-stage retrieval pipeline with PII safety guardrails and multi-intent decomposition:
-
-1. **Corpus Loader** — markdown-aware semantic chunking (splits by `##` headers, prepends parent heading)
-2. **Hybrid Retriever** — TF-IDF + `all-MiniLM-L6-v2` embeddings + RRF fusion → cross-encoder reranking (`ms-marco-MiniLM-L-6-v2`)
-3. **Pipeline** — sanitize → classify → retrieve → escalate → respond
-
-## Setup
+## Main Entry Points
 
 ```bash
-# From the repo root
-pip install -r code/requirements.txt
-
-# Set your Xiaomi API key in .env
-cp .env.example .env
-# Edit .env with XIAOMI_API_KEY
+python code/main.py
+python code/main.py --sample
+python code/evaluate_sample.py
+python code/red_team.py
 ```
 
-## Run
+The main runner writes the required submission CSV. The optional metadata output exposes confidence, sources, risk flags, sanitized input, and timing:
 
 ```bash
-# Full run
-python code/main.py
-
-# Sample run (first 10 tickets)
-python code/main.py --sample
-
-# Custom input/output
-python code/main.py --input path/to/input.csv --output path/to/output.csv
+python code/main.py --sample --metadata-output support_tickets/output_sample_metadata.json
 ```
 
 ## Modules
 
 | Module | Purpose |
 |---|---|
-| `config.py` | Constants, keyword maps, Xiaomi API config |
-| `corpus_loader.py` | Markdown-aware chunking of `data/` corpus |
-| `retriever.py` | TF-IDF + SentenceTransformer embeddings + FAISS + cross-encoder reranking |
-| `classifier.py` | Company inference, request_type, product_area |
-| `escalation.py` | Hard rules (fraud/security/outage) + relevance fallback |
-| `responder.py` | Xiaomi `mimo-v2.5` LLM generation + template fallback |
-| `sanitizer.py` | PII masking + prompt injection detection |
-| `multi_intent.py` | Compound ticket splitting + merge logic |
-| `pipeline.py` | Orchestrator: sanitize → classify → retrieve → escalate → respond |
-| `main.py` | CLI entry point: CSV read → process → write output.csv |
+| `main.py` | CSV batch runner and output writer |
+| `pipeline.py` | Shared decision flow for CLI and UI |
+| `decision.py` | Unified `TriageDecision` and source metadata types |
+| `corpus_loader.py` | Markdown-aware corpus chunking |
+| `retriever.py` | TF-IDF, optional dense retrieval, RRF, reranking, cache manifest |
+| `classifier.py` | Company, product area, and request-type routing |
+| `escalation.py` | High-risk rules and confidence fallback routing |
+| `sanitizer.py` | PII masking and prompt-injection detection |
+| `responder.py` | LLM response generation plus deterministic template fallback |
+| `model_client.py` | OpenAI-compatible model adapter with timeout/retry policy |
+| `validator.py` | Response safety and groundedness validation |
+| `multi_intent.py` | Conservative multi-intent splitting |
+| `evaluate_sample.py` | Sample-label evaluation harness |
+| `red_team.py` | Safety regression cases |
+
+## Decision Flow
+
+`sanitize -> classify -> hard-risk check -> company-scoped retrieval -> confidence check -> generate/template -> validate -> output`
+
+The CSV still uses HackerRank's required `status` values: `replied` or `escalated`. The richer internal `resolution_status` is for debugging and UI telemetry.

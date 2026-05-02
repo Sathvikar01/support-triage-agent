@@ -1,13 +1,21 @@
 import re
-from typing import Optional, Tuple
 from config import COMPANY_KEYWORDS, PRODUCT_AREAS, REQUEST_TYPE_KEYWORDS
+
+
+def _keyword_score(text: str, keywords: list) -> int:
+    score = 0
+    for kw in keywords:
+        pattern = r"(?<!\w)" + re.escape(kw.lower()) + r"(?!\w)"
+        if re.search(pattern, text):
+            score += 1
+    return score
 
 
 def infer_company(text: str, subject: str = "") -> str:
     combined = (text + " " + subject).lower()
     scores = {}
     for company, keywords in COMPANY_KEYWORDS.items():
-        score = sum(1 for kw in keywords if kw.lower() in combined)
+        score = _keyword_score(combined, keywords)
         scores[company] = score
     if max(scores.values()) == 0:
         return "Unknown"
@@ -21,10 +29,10 @@ def classify_request_type(text: str, subject: str = "") -> str:
         return "invalid"
 
     bug_keywords = REQUEST_TYPE_KEYWORDS.get("bug", [])
-    bug_score = sum(1 for kw in bug_keywords if kw.lower() in combined)
+    bug_score = _keyword_score(combined, bug_keywords)
 
     feature_keywords = REQUEST_TYPE_KEYWORDS.get("feature_request", [])
-    feature_score = sum(1 for kw in feature_keywords if kw.lower() in combined)
+    feature_score = _keyword_score(combined, feature_keywords)
 
     if bug_score > 0:
         return "bug"
@@ -66,20 +74,22 @@ def classify_product_area(text: str, subject: str = "", company: str = "Unknown"
         areas = PRODUCT_AREAS[company]
         scores = {}
         for area, keywords in areas.items():
-            score = sum(1 for kw in keywords if kw.lower() in combined)
+            score = _keyword_score(combined, keywords)
             scores[area] = score
         if max(scores.values()) > 0:
             return max(scores, key=scores.get)
+        return "general"
 
+    best_area = "general"
+    best_score = 0
     for comp, areas in PRODUCT_AREAS.items():
-        scores = {}
         for area, keywords in areas.items():
-            score = sum(1 for kw in keywords if kw.lower() in combined)
-            scores[area] = score
-        if max(scores.values()) > 0:
-            return max(scores, key=scores.get)
+            score = _keyword_score(combined, keywords)
+            if score > best_score:
+                best_score = score
+                best_area = area
 
-    return "general"
+    return best_area
 
 
 def classify_ticket(issue: str, subject: str = "", company: str = "None") -> dict:
