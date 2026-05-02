@@ -1,3 +1,4 @@
+import re
 from time import perf_counter
 from typing import Any, Dict, List, Optional
 
@@ -121,7 +122,7 @@ def _process_single(
             response=hard_escalation["response_template"],
             product_area=product_area,
             request_type=request_type,
-            justification=f"Escalated due to {reason}.",
+            justification=_build_escalation_justification(reason, inferred_company, product_area, "hard_rule"),
             company=inferred_company,
             resolution_status=_resolution_from_reason(reason),
             confidence=1.0,
@@ -137,7 +138,7 @@ def _process_single(
             response="I am sorry, this is outside the supported HackerRank, Claude, and Visa support scope.",
             product_area=product_area,
             request_type="invalid",
-            justification="Ticket content is not a valid support request for the provided corpus.",
+            justification=_build_invalid_justification(inferred_company, product_area),
             company=inferred_company,
             resolution_status="out_of_scope",
             confidence=0.9,
@@ -181,7 +182,7 @@ def _process_single(
             response=escalation["response_template"],
             product_area=product_area,
             request_type=request_type,
-            justification=f"Escalated due to {reason}; confidence={confidence:.2f}.",
+            justification=_build_escalation_justification(reason, inferred_company, product_area, "confidence_gate", confidence),
             company=inferred_company,
             resolution_status=_resolution_from_reason(reason),
             confidence=confidence,
@@ -209,9 +210,12 @@ def _process_single(
     if not response:
         response = template_response(issue, context_chunks, inferred_company, product_area, subject, sources)
 
+    response = _clean_response(response)
+
     valid, validation_flags = validate_response(response, sources, status="replied")
     if not valid:
         fallback = template_response(issue, context_chunks, inferred_company, product_area, subject, sources)
+        fallback = _clean_response(fallback)
         fallback_valid, fallback_flags = validate_response(fallback, sources, status="replied")
         if fallback_valid:
             response = fallback
@@ -243,7 +247,7 @@ def _process_single(
         response=response,
         product_area=product_area,
         request_type=request_type,
-        justification=_grounded_justification(inferred_company, product_area, confidence, sources, validation_flags),
+        justification=_grounded_justification(inferred_company, product_area, request_type, confidence, sources, validation_flags),
         company=inferred_company,
         resolution_status="resolved",
         confidence=confidence,
@@ -258,6 +262,14 @@ def _process_single(
             "decision_seconds": perf_counter() - started,
         },
     )
+
+
+def _clean_response(response: str) -> str:
+    cleaned = re.sub(r"(?m)^#{1,6}\s+.*$", "", response or "")
+    cleaned = re.sub(r"!\[[^\]]*\]\([^)]+\)", "", cleaned)
+    cleaned = re.sub(r"https?://\S+", "", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
 
 
 def _merge_decisions(decisions: List[TriageDecision]) -> TriageDecision:
@@ -301,18 +313,50 @@ def _unique_sources(sources: List[SourceRef]) -> List[SourceRef]:
 
 
 def _resolution_from_reason(reason: Optional[str]) -> str:
-    if reason in ("insufficient_context", "corpus_mismatch"):
-        return reason
-    if reason in ("score_manipulation", "fraud", "security", "unauthorized_action", "internal_disclosure"):
-        return "high_risk"
-    if reason == "platform_outage":
-        return "escalated"
-    return "escalated"
+    mapping = {
+        "insufficient_context": "insufficient_context",
+        "corpus_mismatch": "corpus_mismatch",
+        "score_manipulation": "high_risk",
+        "fraud": "high_risk",
+        "security": "high_risk",
+        "unauthorized_action": "high_risk",
+        "internal_disclosure": "high_risk",
+        "platform_outage": "escalated",
+        "refund_demand": "escalated",
+    }
+    return mapping.get(reason, "escalated")
+
+
+def _build_escalation_justification(
+    reason: str, company: str, product_area: str, gate: str, confidence: float = 1.0
+) -> str:
+    reason_labels = {
+        "fraud": "fraud or identity theft indicators detected",
+        "security": "security concern requiring specialized review",
+        "score_manipulation": "score modification request that cannot be fulfilled",
+        "unauthorized_action": "potentially harmful action request",
+        "platform_outage": "reported platform-wide service disruption",
+        "refund_demand": "financial transaction requiring billing team review",
+        "internal_disclosure": "attempt to extract internal system information",
+        "insufficient_context": "insufficient documentation to provide a grounded answer",
+        "corpus_mismatch": "retrieved documentation does not match the expected support domain",
+    }
+    label = reason_labels.get(reason, reason)
+    return f"Escalated: {label}. Company={company}, area={product_area}, gate={gate}, confidence={confidence:.2f}."
+
+
+def _build_invalid_justification(company: str, product_area: str) -> str:
+    return (
+        f"Ticket classified as outside support scope. "
+        f"Company={company}, area={product_area}. "
+        f"No matching support documentation found for the given content."
+    )
 
 
 def _grounded_justification(
     company: str,
     product_area: str,
+    request_type: str,
     confidence: float,
     sources: List[SourceRef],
     validation_flags: List[str],
@@ -320,8 +364,8 @@ def _grounded_justification(
     source_text = "; ".join(source.label() for source in sources[:3]) or "no source"
     validation_text = ""
     if validation_flags:
-        validation_text = f" Validation flags handled: {', '.join(validation_flags)}."
+        validation_text = f" Validation flags: {', '.join(validation_flags)}."
     return (
-        f"Grounded response for {company}/{product_area}; "
+        f"Grounded response for {company}/{product_area} ({request_type}); "
         f"confidence={confidence:.2f}; sources={source_text}.{validation_text}"
     )

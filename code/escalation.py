@@ -1,7 +1,10 @@
 import re
 import unicodedata
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from config import ESCALATION_KEYWORDS, ESCALATION_RESPONSE_TEMPLATES, MIN_CONFIDENCE
+
+
+_COMPILED_KEYWORDS: Dict[str, List[re.Pattern]] = {}
 
 
 def _normalize(text: str) -> str:
@@ -10,26 +13,39 @@ def _normalize(text: str) -> str:
     return ascii_text.lower()
 
 
+def _get_compiled_keywords() -> Dict[str, List[re.Pattern]]:
+    if not _COMPILED_KEYWORDS:
+        for rule_name, keywords in ESCALATION_KEYWORDS.items():
+            _COMPILED_KEYWORDS[rule_name] = [
+                re.compile(re.escape(_normalize(kw)))
+                for kw in keywords
+            ]
+    return _COMPILED_KEYWORDS
+
+
+_DEFENSIVE_MARKERS = [
+    "how do i prevent",
+    "how to prevent",
+    "protect against",
+    "best practices",
+    "mitigate",
+    "avoid sql injection",
+    "prevent sql injection",
+]
+
+
 def _is_defensive_security_question(text: str) -> bool:
-    defensive_markers = [
-        "how do i prevent",
-        "how to prevent",
-        "protect against",
-        "best practices",
-        "mitigate",
-        "avoid sql injection",
-        "prevent sql injection",
-    ]
-    return any(marker in text for marker in defensive_markers)
+    return any(marker in text for marker in _DEFENSIVE_MARKERS)
 
 
 def check_hard_rules(text: str, subject: str = "") -> Optional[str]:
     combined = _normalize(text + " " + subject)
-    for rule_name, keywords in ESCALATION_KEYWORDS.items():
+    compiled = _get_compiled_keywords()
+    for rule_name, patterns in compiled.items():
         if rule_name == "unauthorized_action" and _is_defensive_security_question(combined):
             continue
-        for kw in keywords:
-            if _normalize(kw) in combined:
+        for pat in patterns:
+            if pat.search(combined):
                 return rule_name
     return None
 

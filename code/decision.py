@@ -81,12 +81,9 @@ class TriageDecision:
 
     def to_submission_row(self, issue: str, subject: str, input_company: str) -> Dict[str, str]:
         return {
-            "issue": issue,
-            "subject": subject,
-            "company": input_company,
-            "response": self.response,
-            "product_area": self.product_area,
             "status": self.status,
-            "request_type": self.request_type,
+            "product_area": self.product_area,
+            "response": self.response,
             "justification": self.justification,
+            "request_type": self.request_type,
         }

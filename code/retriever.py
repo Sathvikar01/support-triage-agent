@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import pickle
 from typing import List, Optional, Tuple
 
@@ -8,6 +9,8 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 
 from corpus_loader import Document
 from config import VECTOR_DB_DIR
+
+logger = logging.getLogger(__name__)
 
 try:
     import faiss
@@ -24,20 +27,34 @@ except ImportError:
 
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-CACHE_VERSION = "2026-05-02-company-filtered-v2-chunksize-fix"
+CACHE_VERSION = "2026-05-02-v3-query-expansion"
+
+QUERY_EXPANSION_MAP = {
+    "stolen": "lost stolen card replacement",
+    "card stolen": "lost stolen card replacement block",
+    "identity stolen": "identity theft fraud unauthorized",
+    "not working": "not working error broken issue",
+    "can't access": "cannot access login blocked locked out",
+    "can't login": "cannot login password reset access",
+    "score": "score assessment test results grading",
+    "refund": "refund billing payment charge money back",
+    "delete account": "delete account remove close deactivate",
+    "how to": "guide steps instructions tutorial",
+}
 
 
 class HybridRetriever:
     def __init__(self, documents: List[Document]):
         self.documents = documents
         self.texts = [d.content for d in documents]
-        self.tfidf = TfidfVectorizer(max_features=50000, stop_words="english", ngram_range=(1, 2))
+        self.tfidf = TfidfVectorizer(max_features=20000, stop_words="english", ngram_range=(1, 2))
         self.tfidf_matrix = None
         self.embedder = None
         self.embeddings = None
         self.faiss_index = None
         self.reranker = None
         self.score_mode = "tfidf"
+        self._company_indices: dict = {}
 
     def build(self):
         VECTOR_DB_DIR.mkdir(parents=True, exist_ok=True)
@@ -48,7 +65,7 @@ class HybridRetriever:
 
         manifest = self._manifest()
         if self._cache_is_valid(manifest_path, manifest) and tfidf_path.exists():
-            print("Loading existing retrieval cache...")
+            logger.info("Loading existing retrieval cache...")
             with open(tfidf_path, "rb") as f:
                 tfidf_data = pickle.load(f)
                 self.tfidf = tfidf_data["vectorizer"]
@@ -59,7 +76,7 @@ class HybridRetriever:
             if HAS_FAISS and faiss_path.exists() and self.embedder:
                 self.faiss_index = faiss.read_index(str(faiss_path))
                 self.score_mode = "rrf"
-                print(f"Loaded FAISS index with {self.faiss_index.ntotal} vectors.")
+                logger.info("Loaded FAISS index with %d vectors.", self.faiss_index.ntotal)
             elif embeddings_path.exists() and self.embedder:
                 self.embeddings = np.load(embeddings_path)
                 self.score_mode = "rrf"
@@ -67,22 +84,23 @@ class HybridRetriever:
             if self.reranker:
                 self.score_mode = "rerank"
 
-            print(f"Retriever ready (cache, mode={self.score_mode}).")
+            self._build_company_index()
+            logger.info("Retriever ready (cache, mode=%s).", self.score_mode)
             return
 
         for stale_path in (faiss_path, embeddings_path):
             if stale_path.exists():
                 stale_path.unlink()
 
-        print("Building TF-IDF index from scratch...")
+        logger.info("Building TF-IDF index from scratch...")
         self.tfidf_matrix = self.tfidf.fit_transform(self.texts)
         with open(tfidf_path, "wb") as f:
             pickle.dump({"vectorizer": self.tfidf, "matrix": self.tfidf_matrix}, f)
-        print(f"TF-IDF index built: {self.tfidf_matrix.shape}")
+        logger.info("TF-IDF index built: %s", self.tfidf_matrix.shape)
 
         self._load_models()
         if self.embedder:
-            print(f"Encoding {len(self.texts)} chunks with {EMBEDDING_MODEL}...")
+            logger.info("Encoding %d chunks with %s...", len(self.texts), EMBEDDING_MODEL)
             self.embeddings = self.embedder.encode(
                 self.texts, show_progress_bar=True, batch_size=256, convert_to_numpy=True
             )
@@ -94,14 +112,15 @@ class HybridRetriever:
                 self.faiss_index = faiss.IndexFlatIP(dim)
                 self.faiss_index.add(self.embeddings)
                 faiss.write_index(self.faiss_index, str(faiss_path))
-                print(f"FAISS index built with {self.faiss_index.ntotal} vectors, dim={dim}")
+                logger.info("FAISS index built with %d vectors, dim=%d", self.faiss_index.ntotal, dim)
             else:
                 np.save(embeddings_path, self.embeddings)
 
             self.score_mode = "rerank" if self.reranker else "rrf"
 
+        self._build_company_index()
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-        print(f"Retriever ready (built, mode={self.score_mode}).")
+        logger.info("Retriever ready (built, mode=%s).", self.score_mode)
 
     def retrieve(
         self,
@@ -110,8 +129,9 @@ class HybridRetriever:
         company: Optional[str] = None,
     ) -> List[Tuple[Document, float]]:
         allowed_indices = self._indices_for_company(company)
-        tfidf_results = self._tfidf_search(query, top_k=50, allowed_indices=allowed_indices)
-        embedding_results = self._embedding_search(query, top_k=50, allowed_indices=allowed_indices)
+        expanded_query = self._expand_query(query)
+        tfidf_results = self._tfidf_search(expanded_query, top_k=50, allowed_indices=allowed_indices)
+        embedding_results = self._embedding_search(expanded_query, top_k=50, allowed_indices=allowed_indices)
 
         if embedding_results:
             fused = self._rrf_fusion(tfidf_results, embedding_results, k=60)
@@ -119,7 +139,8 @@ class HybridRetriever:
             fused = tfidf_results
 
         reranked = self._rerank(query, fused[:30])
-        return reranked[:top_k]
+        boosted = self._metadata_boost(reranked, company)
+        return boosted[:top_k]
 
     def estimate_confidence(self, results: List[Tuple[Document, float]]) -> float:
         if not results:
@@ -131,33 +152,58 @@ class HybridRetriever:
             return max(0.0, min(0.95, top_score / 0.03))
         return max(0.0, min(0.95, top_score / 0.25))
 
+    def _expand_query(self, query: str) -> str:
+        lowered = query.lower()
+        expansions = []
+        for key, expansion in QUERY_EXPANSION_MAP.items():
+            if key in lowered:
+                expansions.append(expansion)
+        if expansions:
+            return query + " " + " ".join(expansions)
+        return query
+
+    def _metadata_boost(
+        self, results: List[Tuple[Document, float]], company: Optional[str]
+    ) -> List[Tuple[Document, float]]:
+        if not results or company in (None, "", "None", "Unknown"):
+            return results
+        boosted = []
+        for doc, score in results:
+            doc_company = doc.metadata.get("company", "")
+            if doc_company == company:
+                score *= 1.15
+            boosted.append((doc, score))
+        boosted.sort(key=lambda x: x[1], reverse=True)
+        return boosted
+
+    def _build_company_index(self):
+        for i, doc in enumerate(self.documents):
+            c = doc.metadata.get("company", "Unknown")
+            self._company_indices.setdefault(c, set()).add(i)
+
     def _load_models(self):
         if not HAS_ST:
-            print("sentence-transformers unavailable; using TF-IDF-only retrieval.")
+            logger.info("sentence-transformers unavailable; using TF-IDF-only retrieval.")
             return
         try:
-            print(f"Loading embeddings model: {EMBEDDING_MODEL}")
+            logger.info("Loading embeddings model: %s", EMBEDDING_MODEL)
             self.embedder = SentenceTransformer(EMBEDDING_MODEL)
         except Exception as exc:
-            print(f"Embedding model unavailable ({type(exc).__name__}); using TF-IDF-only retrieval.")
+            logger.warning("Embedding model unavailable (%s); using TF-IDF-only retrieval.", type(exc).__name__)
             self.embedder = None
             return
 
         try:
-            print(f"Loading reranker: {RERANKER_MODEL}")
+            logger.info("Loading reranker: %s", RERANKER_MODEL)
             self.reranker = CrossEncoder(RERANKER_MODEL)
         except Exception as exc:
-            print(f"Reranker unavailable ({type(exc).__name__}); using fused retrieval scores.")
+            logger.warning("Reranker unavailable (%s); using fused retrieval scores.", type(exc).__name__)
             self.reranker = None
 
     def _indices_for_company(self, company: Optional[str]) -> Optional[set]:
         if company in (None, "", "None", "Unknown"):
             return None
-        indices = {
-            i for i, doc in enumerate(self.documents)
-            if doc.metadata.get("company") == company
-        }
-        return indices or None
+        return self._company_indices.get(company) or None
 
     def _tfidf_search(
         self,

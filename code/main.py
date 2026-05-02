@@ -12,7 +12,7 @@ from retriever import HybridRetriever
 from pipeline import triage_decision
 
 
-OUTPUT_FIELDS = ["issue", "subject", "company", "response", "product_area", "status", "request_type", "justification"]
+OUTPUT_FIELDS = ["status", "product_area", "response", "justification", "request_type"]
 
 
 def run(input_csv: Path, output_csv: Path, sample: bool = False, metadata_output: Path = None):
