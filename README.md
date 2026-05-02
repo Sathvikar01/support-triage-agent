@@ -12,7 +12,7 @@ The design favors safe, grounded answers over free-form generation. If the syste
 - Classifies company, product area, and request type.
 - Uses company-scoped hybrid retrieval: TF-IDF, dense embeddings, RRF, and optional cross-encoder reranking.
 - Applies hard escalation categories for fraud, score manipulation, platform outage, security disclosure, unauthorized action, refund disputes, and internal-disclosure attempts.
-- Computes confidence and source metadata for UI/debugging.
+- Computes confidence and source metadata for debugging.
 - Validates generated responses and falls back to deterministic source-grounded templates when no API key is available.
 
 ## Quick Setup
@@ -46,12 +46,6 @@ python code/main.py --input support_tickets/support_tickets.csv --output support
 python code/main.py --sample --metadata-output support_tickets/output_sample_metadata.json
 ```
 
-Streamlit demo:
-
-```bash
-streamlit run ui.py
-```
-
 Evaluation and red-team checks:
 
 ```bash
@@ -77,7 +71,7 @@ The submission CSV keeps the required fields:
 | `justification` | concise routing and grounding explanation |
 | `request_type` | `product_issue`, `feature_request`, `bug`, `invalid` |
 
-Internally, the pipeline also tracks `resolution_status`, `company`, `confidence`, `sources`, `risk_flags`, sanitized input, and per-stage timing. These are available in the UI and optional metadata JSON, but the main CSV stays compatible with the challenge schema.
+Internally, the pipeline also tracks `resolution_status`, `company`, `confidence`, `sources`, `risk_flags`, sanitized input, and per-stage timing. These are available in the optional metadata JSON, but the main CSV stays compatible with the challenge schema.
 
 ## Architecture
 
@@ -98,7 +92,7 @@ flowchart TB
 
 ```mermaid
 sequenceDiagram
-    participant Runner as CLI/UI
+    participant Runner as CLI
     participant Pipe as pipeline.py
     participant Guard as sanitizer/escalation
     participant RAG as retriever.py
@@ -189,7 +183,7 @@ The security layer is intentionally layered instead of regex-only:
 - Hard-risk categories are deterministic and map to explicit response templates.
 - Retrieval confidence and source-company agreement decide whether an answer is safe.
 - Generated answers are validated before being returned.
-- Raw retrieved chunks are shown only in the local telemetry UI, not required in the final CSV.
+- Raw retrieved chunks are shown only in the local telemetry logs, not required in the final CSV.
 
 ## Repository Layout
 
@@ -201,7 +195,6 @@ The security layer is intentionally layered instead of regex-only:
 ├── AGENTS.md                       # agent onboarding and logging protocol
 ├── evalutation_criteria.md         # official judging rubric
 ├── problem_statement.md            # challenge requirements
-├── ui.py                           # Streamlit telemetry demo
 ├── code/
 │   ├── main.py                     # CLI batch runner
 │   ├── pipeline.py                 # decision pipeline (CLI + UI)
@@ -237,4 +230,4 @@ The security layer is intentionally layered instead of regex-only:
 - Conservative confidence gates improve safety but can over-escalate.
 - Template fallback is reliable offline, but less fluent than a model response.
 - Source citations improve defensibility, but the final CSV schema has no dedicated source column, so source labels are included in justification and metadata.
-- Streamlit telemetry is useful for demos, while the CLI remains the evaluable entry point.
+- Streamlit telemetry was removed in favor of pure CLI evaluation entry points.
