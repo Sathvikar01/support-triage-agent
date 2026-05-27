@@ -41,12 +41,20 @@ def _is_defensive_security_question(text: str) -> bool:
 def check_hard_rules(text: str, subject: str = "") -> Optional[str]:
     combined = _normalize(text + " " + subject)
     compiled = _get_compiled_keywords()
+    refund_score = 0
     for rule_name, patterns in compiled.items():
         if rule_name == "unauthorized_action" and _is_defensive_security_question(combined):
+            continue
+        if rule_name == "refund_demand":
+            for pat in patterns:
+                if pat.search(combined):
+                    refund_score += 1
             continue
         for pat in patterns:
             if pat.search(combined):
                 return rule_name
+    if refund_score >= 2:
+        return "refund_demand"
     return None
 
 
@@ -81,7 +89,7 @@ def assess_escalation(
 
         if expected_company not in ("Unknown", "None", "", None):
             companies = {c for c in (source_companies or []) if c}
-            if companies and expected_company not in companies:
+            if companies and expected_company not in companies and confidence < 0.7:
                 return {
                     "escalated": True,
                     "reason": "corpus_mismatch",
@@ -100,3 +108,4 @@ def assess_escalation(
         "reason": None,
         "response_template": None,
     }
+

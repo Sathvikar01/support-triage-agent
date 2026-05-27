@@ -147,7 +147,7 @@ class HybridRetriever:
             return 0.0
         top_score = results[0][1]
         if self.score_mode == "rerank":
-            return float(1.0 / (1.0 + np.exp(-top_score)))
+            return max(0.0, min(0.95, (top_score + 10.0) / 20.0))
         if self.score_mode == "rrf":
             return max(0.0, min(0.95, top_score / 0.03))
         return max(0.0, min(0.95, top_score / 0.25))
@@ -171,7 +171,7 @@ class HybridRetriever:
         for doc, score in results:
             doc_company = doc.metadata.get("company", "")
             if doc_company == company:
-                score *= 1.15
+                score *= 1.5
             boosted.append((doc, score))
         boosted.sort(key=lambda x: x[1], reverse=True)
         return boosted

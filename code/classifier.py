@@ -58,14 +58,26 @@ def classify_request_type(text: str, subject: str = "") -> str:
     if _is_clearly_invalid(combined):
         return "invalid"
 
-    patterns = _get_request_patterns()
-    bug_patterns = patterns.get("bug", [])
-    feature_patterns = patterns.get("feature_request", [])
+    bug_config = REQUEST_TYPE_KEYWORDS.get("bug", {})
+    feature_patterns = _get_request_patterns().get("feature_request", [])
 
-    bug_score = _keyword_score(combined, bug_patterns)
+    bug_score = 0
+    if isinstance(bug_config, dict):
+        for kw in bug_config.get("strong", []):
+            if re.search(r"(?<!\w)" + re.escape(kw.lower()) + r"(?!\w)", combined):
+                bug_score += 3
+        for kw in bug_config.get("moderate", []):
+            if re.search(r"(?<!\w)" + re.escape(kw.lower()) + r"(?!\w)", combined):
+                bug_score += 2
+        for kw in bug_config.get("weak", []):
+            if re.search(r"(?<!\w)" + re.escape(kw.lower()) + r"(?!\w)", combined):
+                bug_score += 1
+    else:
+        bug_score = _keyword_score(combined, _get_request_patterns().get("bug", []))
+
     feature_score = _keyword_score(combined, feature_patterns)
 
-    if bug_score > 0:
+    if bug_score >= 2:
         return "bug"
     if feature_score > 0:
         return "feature_request"
@@ -81,9 +93,8 @@ _INVALID_PATTERNS = [
     re.compile(r'\bwho played\b', re.I),
     re.compile(r'\bjoke\b', re.I),
     re.compile(r'\briddle\b', re.I),
-    re.compile(r'\bfunny\b', re.I),
 ]
-_GREETING_PATTERN = re.compile(r'^(hi|hello|hey|thanks|thank you|bye|ok|yes|no)\s*[!?.]*$', re.I)
+_GREETING_PATTERN = re.compile(r'^(hi|hello|hey|thanks|thank you|bye|ok|okay|yes|no|hi there|hey there|hello there)\s*[!?.]*$', re.I)
 
 
 def _is_clearly_invalid(text: str) -> bool:
@@ -140,3 +151,4 @@ def classify_ticket(issue: str, subject: str = "", company: str = "None") -> dic
         "request_type": request_type,
         "product_area": product_area,
     }
+

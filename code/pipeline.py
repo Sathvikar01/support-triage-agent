@@ -268,11 +268,19 @@ def _clean_response(response: str) -> str:
     cleaned = re.sub(r"(?m)^#{1,6}\s+.*$", "", response or "")
     cleaned = re.sub(r"!\[[^\]]*\]\([^)]+\)", "", cleaned)
     cleaned = re.sub(r"https?://\S+", "", cleaned)
+    cleaned = re.sub(r"\*\*([^*]+)\*\*", r"\1", cleaned)
+    cleaned = re.sub(r"\*([^*]+)\*", r"\1", cleaned)
+    cleaned = re.sub(r"__([^_]+)__", r"\1", cleaned)
+    cleaned = re.sub(r"_([^_]+)_", r"\1", cleaned)
+    cleaned = re.sub(r"\\([>!#])", r"\1", cleaned)
+    cleaned = re.sub(r"_Last updated:.*?_\s*", "", cleaned)
+    cleaned = re.sub(r"\(Last updated.*?\)\s*", "", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip()
 
 
 def _merge_decisions(decisions: List[TriageDecision]) -> TriageDecision:
+    from collections import Counter
     escalated = [decision for decision in decisions if decision.status == "escalated"]
     selected = escalated[0] if escalated else decisions[0]
     status = "escalated" if escalated else "replied"
@@ -284,11 +292,18 @@ def _merge_decisions(decisions: List[TriageDecision]) -> TriageDecision:
     risk_flags = sorted({flag for decision in decisions for flag in decision.risk_flags})
     companies = sorted({decision.company for decision in decisions if decision.company})
 
+    product_areas = [d.product_area for d in decisions]
+    request_types = [d.request_type for d in decisions]
+    area_counts = Counter(product_areas)
+    merged_area = area_counts.most_common(1)[0][0] if area_counts else selected.product_area
+    type_counts = Counter(request_types)
+    merged_type = type_counts.most_common(1)[0][0] if type_counts else selected.request_type
+
     return TriageDecision(
         status=status,
         response=response,
-        product_area=selected.product_area,
-        request_type=selected.request_type,
+        product_area=merged_area,
+        request_type=merged_type,
         justification="Multiple intents detected; responses were composed per sub-issue.",
         company=companies[0] if len(companies) == 1 else "Multiple",
         resolution_status="escalated" if escalated else "resolved",
@@ -296,7 +311,10 @@ def _merge_decisions(decisions: List[TriageDecision]) -> TriageDecision:
         sources=sources,
         risk_flags=risk_flags,
         context_chunks=[chunk for decision in decisions for chunk in decision.context_chunks],
-        telemetry={},
+        telemetry={
+            "sub_intent_count": len(decisions),
+            "sub_intents_escalated": len(escalated),
+        },
     )
 
 
@@ -369,3 +387,4 @@ def _grounded_justification(
         f"Grounded response for {company}/{product_area} ({request_type}); "
         f"confidence={confidence:.2f}; sources={source_text}.{validation_text}"
     )
+

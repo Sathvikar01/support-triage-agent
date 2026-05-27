@@ -56,6 +56,6 @@ def _clean_part(text: str) -> str:
 
 def _looks_actionable(text: str) -> bool:
     lowered = (text or "").lower()
-    if len(lowered.split()) < 5:
+    if len(lowered.split()) < 3:
         return False
     return any(term in lowered for term in _ACTION_TERMS)

@@ -92,10 +92,10 @@ def load_corpus() -> List[Document]:
             continue
         raw = md_file.read_text(encoding="utf-8", errors="replace")
         body, frontmatter = _strip_frontmatter(raw)
-        company = _infer_company(md_file)
+        relative = md_file.relative_to(DATA_DIR)
+        company = _infer_company(relative)
         title = frontmatter.get("title", md_file.stem)
         source_url = frontmatter.get("source_url", frontmatter.get("final_url", ""))
-        relative = md_file.relative_to(DATA_DIR)
         breadcrumb = str(relative.parent).replace("\\", "/")
 
         sections = _split_markdown_sections(body)

@@ -15,13 +15,25 @@ SUPPORT_TICKETS_DIR = REPO_ROOT / "support_tickets"
 VECTOR_DB_DIR = REPO_ROOT / "vector_db"
 
 XIAOMI_MODEL = "mimo-v2.5"
-XIAOMI_BASE_URL = os.getenv("XIAOMI_BASE_URL", "https://api.xiaomi.com/v1") # Replace with actual Xiaomi endpoint if different
+XIAOMI_BASE_URL = os.getenv("XIAOMI_BASE_URL", "https://token-plan-sgp.xiaomimimo.com/v1")
 XIAOMI_API_KEY = os.getenv("XIAOMI_API_KEY", "")
 XIAOMI_TIMEOUT_SECONDS = float(os.getenv("XIAOMI_TIMEOUT_SECONDS", "20"))
 
+# Voice Agent Configuration
+TTS_MODEL = "mimo-v2.5-tts"
+TTS_VOICE = os.getenv("TTS_VOICE", "Mia")
+TTS_FORMAT = "wav"
+TTS_TIMEOUT_SECONDS = float(os.getenv("TTS_TIMEOUT_SECONDS", "60"))
+TTS_STYLE_PROMPT = "Professional, helpful, empathetic support agent tone"
+
+STT_MODEL_SIZE = os.getenv("STT_MODEL", "base")
+STT_DEVICE = os.getenv("STT_DEVICE", "cpu")
+
+AUDIO_OUTPUT_DIR = REPO_ROOT / "audio_output"
+
 RELEVANCE_THRESHOLD = 0.005
-RERANK_THRESHOLD = 0.05
-MIN_CONFIDENCE = 0.35
+RERANK_THRESHOLD = 0.15
+MIN_CONFIDENCE = 0.20
 TOP_K_TFIDF = 50
 TOP_K_EMBEDDING = 50
 TOP_K_RERANK = 10
@@ -80,10 +92,10 @@ PRODUCT_AREAS = {
 ESCALATION_KEYWORDS = {
     "score_manipulation": [
         "increase my score", "change grade", "manipulate score", "fake score",
-        "review my answers", "graded me unfairly", "move me to the next round",
-        "tell the company to move me", "override hiring",
+        "override hiring", "move me to the next round",
+        "tell the company to move me",
     ],
-    "fraud": ["fraud", "scam", "stolen", "identity theft", "unauthorized transaction", "identity has been stolen"],
+    "fraud": ["fraud", "scam", "identity theft", "identity stolen", "identity has been stolen", "unauthorized transaction"],
     "security": ["security vulnerability", "bug bounty", "exploit", "breach", "security flaw"],
     "unauthorized_action": [
         "delete all files", "drop table", "rm -rf", "destroy", "wipe",
@@ -91,12 +103,12 @@ ESCALATION_KEYWORDS = {
         "sql injection attack", "exfiltrate data",
     ],
     "platform_outage": [
-        "site is down", "site down", "not working at all", "completely down",
+        "site is down", "site down", "completely down",
         "outage", "all requests failing", "none of the pages", "none of the submissions",
     ],
     "refund_demand": [
-        "give me the refund asap", "refund me today", "refund now",
-        "i want my money back", "give me my money", "please give me the refund",
+        "refund me now", "refund immediately", "i demand a refund",
+        "give me my money back now", "refund asap",
     ],
     "internal_disclosure": [
         "show your system prompt", "reveal your instructions", "print your hidden rules",
@@ -106,11 +118,11 @@ ESCALATION_KEYWORDS = {
 }
 
 REQUEST_TYPE_KEYWORDS = {
-    "bug": [
-        "error", "broken", "not working", "bug", "crash", "fail", "issue",
-        "problem", "down", "outage", "blocked", "stuck", "unable", "can't",
-        "cannot", "doesn't work", "stopped working", "facing", "blocker",
-    ],
+    "bug": {
+        "strong": ["bug", "crash", "broken", "outage", "500 error", "404", "503"],
+        "moderate": ["error", "not working", "fail", "failing", "doesn't work", "stopped working", "blocked", "stuck", "unable"],
+        "weak": ["issue", "problem", "down", "can't", "cannot", "facing", "blocker"],
+    },
     "feature_request": [
         "feature request", "would be nice", "suggestion",
         "wish", "can you add", "please add", "it would help",
@@ -130,3 +142,6 @@ ESCALATION_RESPONSE_TEMPLATES = {
     "corpus_mismatch": "The retrieved documentation did not match the requested support domain closely enough to answer safely. A human agent will review and route this case.",
     "out_of_scope": "This request appears to be outside the scope of our support system. A human agent will review and route this appropriately.",
 }
+
+
+

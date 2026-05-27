@@ -46,7 +46,25 @@ def run(input_csv: Path, output_csv: Path, sample: bool = False, metadata_output
 
         print(f"  [{i+1}/{len(tickets)}] {subject[:50]}..." if subject else f"  [{i+1}/{len(tickets)}] {issue[:50]}...")
         start = time.time()
-        decision = triage_decision(issue, subject, company, retriever)
+        try:
+            decision = triage_decision(issue, subject, company, retriever)
+        except Exception as exc:
+            print(f"    !! ERROR: {exc}")
+            from decision import TriageDecision
+            decision = TriageDecision(
+                status="escalated",
+                response="An error occurred while processing this ticket. A human agent will review it.",
+                product_area="general",
+                request_type="product_issue",
+                justification=f"Pipeline error: {type(exc).__name__}: {str(exc)[:200]}",
+                company=company if company not in ("", "None", None) else "Unknown",
+                resolution_status="error",
+                confidence=0.0,
+                risk_flags=["pipeline_error"],
+                sanitized_query=issue,
+                sanitized_subject=subject,
+                telemetry={"total_seconds": time.time() - start},
+            )
         result = decision.to_dict()
         elapsed = time.time() - start
         print(f"    -> {result['status']} / {result['resolution_status']} / confidence={result['confidence']} ({elapsed:.1f}s)")
@@ -82,6 +100,37 @@ if __name__ == "__main__":
     parser.add_argument("--input", type=str, default=str(SUPPORT_TICKETS_DIR / "support_tickets.csv"))
     parser.add_argument("--output", type=str, default=str(SUPPORT_TICKETS_DIR / "output.csv"))
     parser.add_argument("--metadata-output", type=str, default="", help="Optional JSONL-style debug metadata path")
+    parser.add_argument("--voice", action="store_true", help="Enable voice output (TTS)")
+    parser.add_argument("--voice-name", type=str, default="Mia", help="TTS voice: Mia/Chloe/Milo/Dean")
+    parser.add_argument("--voice-input", type=str, default="", help="Path to audio file for STT input")
+    parser.add_argument("--interactive", action="store_true", help="Interactive voice REPL mode")
+    parser.add_argument("--audio-dir", type=str, default="", help="Output directory for audio files")
     args = parser.parse_args()
-    metadata_output = Path(args.metadata_output) if args.metadata_output else None
-    run(Path(args.input), Path(args.output), sample=args.sample, metadata_output=metadata_output)
+
+    # Voice agent mode
+    if args.voice or args.voice_input or args.interactive:
+        from voice_agent import VoiceAgent
+        from config import AUDIO_OUTPUT_DIR
+        agent = VoiceAgent(
+            voice=args.voice_name,
+            output_dir=args.audio_dir or str(AUDIO_OUTPUT_DIR),
+        )
+        if args.voice_input:
+            result = agent.process_voice_input(args.voice_input)
+            if result.get("error"):
+                print(f"Error: {result['error']}")
+            else:
+                print(f"Transcription: {result['transcription']}")
+                print(f"Status: {result['status']}")
+                print(f"Response: {result['text_response']}")
+                if result["audio_path"]:
+                    print(f"Audio: {result['audio_path']}")
+        elif args.interactive:
+            agent.run_interactive(voice=args.voice_name)
+        else:
+            # Batch mode with voice output
+            agent.run_batch(Path(args.input), voice=args.voice_name)
+    else:
+        # Standard text-only mode
+        metadata_output = Path(args.metadata_output) if args.metadata_output else None
+        run(Path(args.input), Path(args.output), sample=args.sample, metadata_output=metadata_output)
